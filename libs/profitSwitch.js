@@ -1,6 +1,8 @@
 var async  = require('async');
 var net    = require('net');
 var bignum = require('bignum');
+var fs     = require('fs');
+
 var algos  = require('stratum-pool/lib/algoProperties.js');
 var util   = require('stratum-pool/lib/util.js');
 
@@ -24,6 +26,25 @@ module.exports = function(logger){
     //
     var profitStatus = {};
     var symbolToAlgorithmMap = {};
+    
+    process.on('message', function(message) {
+        switch(message.type){
+            case 'reloadpool':
+                if (message.coin) {
+                    var messageCoin = message.coin.toLowerCase();
+                    var poolTarget = Object.keys(poolConfigs).filter(function(p){
+                        return p.toLowerCase() === messageCoin;
+                    })[0];
+                    poolConfigs  = JSON.parse(message.pools);
+                    populateProfitStatus(poolConfigs);
+                    checkProfitStatus();
+                }
+                break;
+	    }
+    });	        
+    
+    var populateProfitStatus = function() {
+
     Object.keys(poolConfigs).forEach(function(coin){
 
         var poolConfig = poolConfigs[coin];
@@ -42,7 +63,9 @@ module.exports = function(logger){
         profitStatus[algo][poolConfig.coin.symbol] = coinStatus;
         symbolToAlgorithmMap[poolConfig.coin.symbol] = algo;
     });
+    }
 
+    var checkProfitStatus = function() {
 
     // 
     // ensure we have something to switch
@@ -58,10 +81,15 @@ module.exports = function(logger){
     });
     if (Object.keys(profitStatus).length == 0){
         logger.debug(logSystem, 'Config', 'No alternative coins to switch to in current config, switching disabled.');
-        return;
+            return true;
+        }
+        return false
     }
 
-
+    populateProfitStatus();
+    if (checkProfitStatus())
+        return;
+    
     // 
     // setup APIs
     //
@@ -488,7 +516,7 @@ module.exports = function(logger){
                 return;
             }
             var depth = new Number(0);
-            if (response.hasOwnProperty('result')){
+            if (response.hasOwnProperty('result') && response.success == true){
                 var totalQty = new Number(0);
                 response['result'].forEach(function(order){
                     var price = new Number(order.Rate);
@@ -500,6 +528,10 @@ module.exports = function(logger){
                        totalQty += qty;
                     }
                 });
+            } else {
+		logger.error(logSystem, symbolB, 'Error while getting Bittrex market information: ' + response.message);
+		callback();
+                return;
             }
 
             var marketData = profitStatus[symbolToAlgorithmMap[symbolB]][symbolB].exchangeInfo['Bittrex'];
@@ -541,8 +573,8 @@ module.exports = function(logger){
             logger[severity](logSystem, symbol, message);
             callback(null); // fail gracefully for each coin
         });
-
-        daemon.cmd('getblocktemplate', [{"capabilities": [ "coinbasetxn", "workid", "coinbase/append" ]}], function(result) {
+        if (symbol == 'PPC') {
+            daemon.cmd('getblocktemplate', [{"mode": "template" }], function(result) {
             if (result[0].error != null) {
                 logger.error(logSystem, symbol, 'Error while reading daemon info: ' + JSON.stringify(result[0]));
                 callback(null); // fail gracefully for each coin
@@ -554,11 +586,39 @@ module.exports = function(logger){
             // some shitcoins dont provide target, only bits, so we need to deal with both
             var target = response.target ? bignum(response.target, 16) : util.bignumFromBitsHex(response.bits);
             coinStatus.difficulty = parseFloat((diff1 / target.toNumber()).toFixed(9));
-            logger.debug(logSystem, symbol, 'difficulty is ' + coinStatus.difficulty);
+                logger.warn(logSystem, symbol, 'difficulty is ' + coinStatus.difficulty);
 
-            coinStatus.reward = response.coinbasevalue / 100000000;
+                coinStatus.reward = response.coinbasevalue / 1000000;
             callback(null);
         });
+        } else {
+            daemon.cmd('getblocktemplate', [{"capabilities": [ "coinbasetxn", "workid", "coinbase/append" ]}], function(result) {
+                if (result[0].error != null) {
+                    logger.error(logSystem, symbol, 'Error while reading daemon info: ' + JSON.stringify(result[0]));
+                    callback(null); // fail gracefully for each coin
+                    return;
+                }
+                var coinStatus = profitStatus[symbolToAlgorithmMap[symbol]][symbol];
+                var response = result[0].response;
+    
+                // some shitcoins dont provide target, only bits, so we need to deal with both
+                var target = response.target ? bignum(response.target, 16) : util.bignumFromBitsHex(response.bits);
+                coinStatus.difficulty = parseFloat((diff1 / target.toNumber()).toFixed(9));
+                logger.warn(logSystem, symbol, 'difficulty is ' + coinStatus.difficulty);
+    
+            if (coinStatus.name == 'dogecoindark'){coinStatus.reward = response.coinbasevalue / 1000000;}
+            else if (coinStatus.name == 'cryptobullion'){coinStatus.reward = response.coinbasevalue / 1000000;}
+            else if (coinStatus.name == 'tekcoin'){coinStatus.reward = response.coinbasevalue / 1000000;}
+            else if (coinStatus.name == 'battlecoin'){coinStatus.reward = response.coinbasevalue / 1000000;}
+            else if (coinStatus.name == 'opensourcecoin'){coinStatus.reward = response.coinbasevalue / 1000000;}
+            else if (coinStatus.name == 'legendarycoin'){coinStatus.reward = response.coinbasevalue / 1000000;}
+            else if (coinStatus.name == 'novacoin'){coinStatus.reward = response.coinbasevalue / 1000000;}
+            else if (coinStatus.name == 'tagcoin'){coinStatus.reward = response.coinbasevalue / 1000000;}
+    
+            else{coinStatus.reward = response.coinbasevalue / 100000000;}
+            callback(null);
+            });
+	}
     };
 
 
@@ -567,7 +627,10 @@ module.exports = function(logger){
         Object.keys(profitStatus).forEach(function(algo){
             Object.keys(profitStatus[algo]).forEach(function(symbol){
                 var coinStatus = profitStatus[symbolToAlgorithmMap[symbol]][symbol];
-                coinStatus.blocksPerMhPerHour = 86400 / ((coinStatus.difficulty * Math.pow(2,32)) / (1 * 1000 * 1000));
+                if (algo == "sha256"){
+	coinStatus.blocksPerMhPerHour = 86400 / ((coinStatus.difficulty * Math.pow(2,32)) / (1 * 1000 * 1000 * 1000));
+	} else {coinStatus.blocksPerMhPerHour = 86400 / ((coinStatus.difficulty * Math.pow(2,32)) / (1 * 1000 * 1000));
+}
                 coinStatus.coinsPerMhPerHour = coinStatus.reward * coinStatus.blocksPerMhPerHour;
             });
         });
@@ -596,7 +659,7 @@ module.exports = function(logger){
                             bestCoin = profitStatus[algo][symbol].name;
                         }
                         coinStatus.btcPerMhPerHour = btcPerMhPerHour;
-                        logger.debug(logSystem, 'CALC', 'BTC/' + symbol + ' on ' + exchange + ' with ' + coinStatus.btcPerMhPerHour.toFixed(8) + ' BTC/day per Mh/s');
+                        logger.warn(logSystem, 'CALC', 'BTC/' + symbol + ' on ' + exchange + ' with ' + coinStatus.btcPerMhPerHour.toFixed(8) + ' BTC/day per Mh/s');
                     }
                     if (exchangeData.hasOwnProperty('LTC') && exchangeData['LTC'].hasOwnProperty('weightedBid')){
                         var btcPerMhPerHour = (exchangeData['LTC'].weightedBid * coinStatus.coinsPerMhPerHour) * exchangeData['LTC'].ltcToBtc;
@@ -606,13 +669,15 @@ module.exports = function(logger){
                             bestCoin = profitStatus[algo][symbol].name;
                         }
                         coinStatus.btcPerMhPerHour = btcPerMhPerHour;
-                        logger.debug(logSystem, 'CALC', 'LTC/' + symbol + ' on ' + exchange + ' with ' + coinStatus.btcPerMhPerHour.toFixed(8) + ' BTC/day per Mh/s');
+                        logger.warn(logSystem, 'CALC', 'LTC/' + symbol + ' on ' + exchange + ' with ' + coinStatus.btcPerMhPerHour.toFixed(8) + ' BTC/day per Mh/s');
                     }
                 });
             });
-            logger.debug(logSystem, 'RESULT', 'Best coin for ' + algo + ' is ' + bestCoin + ' on ' + bestExchange + ' with ' + bestBtcPerMhPerHour.toFixed(8) + ' BTC/day per Mh/s');
-
-
+            logger.warn(logSystem, 'RESULT', 'Best coin for ' + algo + ' is ' + bestCoin + ' on ' + bestExchange + ' with ' + bestBtcPerMhPerHour.toFixed(8) + ' BTC/day per Mh/s');
+			// Uncomment for advanced reporting, not included in base repo. You must do some magic on your side ;)
+			//fs.writeFile('~/unomp/website/static/' + algo + '.txt', bestBtcPerMhPerHour.toFixed(8),function (err) {
+  			//	if (err) throw err;
+		//});
             var client = net.connect(portalConfig.cliPort, function () {
                 client.write(JSON.stringify({
                     command: 'coinswitch',
@@ -631,7 +696,7 @@ module.exports = function(logger){
 
 
     var checkProfitability = function(){
-        logger.debug(logSystem, 'Check', 'Collecting profitability data.');
+        logger.warn(logSystem, 'Check', 'Collecting profitability data.');
 
         profitabilityTasks = [];
         if (portalConfig.profitSwitch.usePoloniex)

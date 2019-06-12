@@ -1,4 +1,5 @@
 var fs = require('fs');
+var request = require('request');
 
 var redis = require('redis');
 var async = require('async');
@@ -6,21 +7,42 @@ var async = require('async');
 var Stratum = require('stratum-pool');
 var util = require('stratum-pool/lib/util.js');
 
+let badBlocks = {}
 
 module.exports = function(logger){
 
     var poolConfigs = JSON.parse(process.env.pools);
 
     var enabledPools = [];
-
-    Object.keys(poolConfigs).forEach(function(coin) {
-        var poolOptions = poolConfigs[coin];
-        if (poolOptions.paymentProcessing &&
-            poolOptions.paymentProcessing.enabled)
-            enabledPools.push(coin);
+    
+    process.on('message', function(message) {
+        switch(message.type){
+            case 'reloadpool':
+                if (message.coin) {
+                    var messageCoin = message.coin.toLowerCase();
+                    var poolTarget = Object.keys(poolConfigs).filter(function(p){
+                        return p.toLowerCase() === messageCoin;
+                    })[0];
+                    poolConfigs  = JSON.parse(message.pools);
+                    if (addPoolIfEnabled(messageCoin))
+                        setupPools([messageCoin]);
+                }
+                break;
+        }
     });
 
-    async.filter(enabledPools, function(coin, callback){
+    var addPoolIfEnabled = function(c) {
+        var poolOptions = poolConfigs[c];
+        if (poolOptions.paymentProcessing && poolOptions.paymentProcessing.enabled) {
+            enabledPools.push(c);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    var setupPools = function(enPools) {
+        async.filter(enPools, function(coin, callback){
         SetupForPool(logger, poolConfigs[coin], function(setupResults){
             callback(setupResults);
         });
@@ -39,13 +61,21 @@ module.exports = function(logger){
 
         });
     });
-};
+    }
 
+    Object.keys(poolConfigs).forEach(function(coin) {
+        addPoolIfEnabled(coin);
+    });
+
+    setupPools(enabledPools);
+
+};
 
 function SetupForPool(logger, poolOptions, setupFinished){
 
 
     var coin = poolOptions.coin.name;
+    var coinSymbol = poolOptions.coin.symbol;
     var processingConfig = poolOptions.paymentProcessing;
 
     var logSystem = 'Payments';
@@ -55,6 +85,8 @@ function SetupForPool(logger, poolOptions, setupFinished){
         logger[severity](logSystem, logComponent, message);
     });
     var redisClient = redis.createClient(poolOptions.redis.port, poolOptions.redis.host);
+	redisClient.auth(poolOptions.redis.password);
+	redisClient.select(poolOptions.redis.db);
 
     var magnitude;
     var minPaymentSatoshis;
@@ -230,18 +262,18 @@ function SetupForPool(logger, poolOptions, setupFinished){
                         var round = rounds[i];
 
                         if (tx.error && tx.error.code === -5){
-                            logger.warning(logSystem, logComponent, 'Daemon reports invalid transaction: ' + round.txHash);
+                            logger.error(logSystem, logComponent, 'Daemon reports invalid transaction: ' + round.txHash);
                             round.category = 'kicked';
                             return;
                         }
-                        else if (!tx.result.details || (tx.result.details && tx.result.details.length === 0)){
-                            logger.warning(logSystem, logComponent, 'Daemon reports no details for transaction: ' + round.txHash);
-                            round.category = 'kicked';
-                            return;
-                        }
-                        else if (tx.error || !tx.result){
+                        else if (tx.error || tx.result == null){
                             logger.error(logSystem, logComponent, 'Odd error with gettransaction ' + round.txHash + ' '
                                 + JSON.stringify(tx));
+                            return;
+                        }
+                        else if (tx.result.details == null || (tx.result.details && tx.result.details.length === 0)){
+                            logger.debug(logSystem, logComponent, 'Daemon reports no details for transaction: ' + round.txHash);
+                            round.category = 'kicked';
                             return;
                         }
 
@@ -366,26 +398,44 @@ function SetupForPool(logger, poolOptions, setupFinished){
              if not sending the balance, the differnce should be +(the amount they earned this round)
              */
             function(workers, rounds, addressAccount, callback) {
-
                 var trySend = function (withholdPercent) {
+		    var test = Object.keys(workers);
                     var addressAmounts = {};
                     var totalSent = 0;
-                    for (var w in workers) {
+		      test.forEach(function(w) {
+			daemon.cmd('validateaddress', [w], function (results) {
+    			  var validWorkerAddress = results[0].response.isvalid;
+			if (!results[0].response.address) {
+                var worker = workers[w];
+                worker.balance = worker.balance || 0;
+                worker.reward = worker.reward || 0;
+                var toSend = (worker.balance + worker.reward) * (1 - withholdPercent);
+                worker.balanceChange = Math.max(toSend - worker.balance, 0);
+                worker.sent = 0;
+			} else {
                         var worker = workers[w];
                         worker.balance = worker.balance || 0;
                         worker.reward = worker.reward || 0;
                         var toSend = (worker.balance + worker.reward) * (1 - withholdPercent);
                         if (toSend >= minPaymentSatoshis) {
-                            totalSent += toSend;
                             var address = worker.address = (worker.address || getProperAddress(w));
                             worker.sent = addressAmounts[address] = satoshisToCoins(toSend);
                             worker.balanceChange = Math.min(worker.balance, toSend) * -1;
-                        }
-                        else {
+                    totalSent += toSend;
+                } else {
                             worker.balanceChange = Math.max(toSend - worker.balance, 0);
                             worker.sent = 0;
                         }
                     }
+		    });
+		    });
+
+
+setTimeout(function() {
+logger.info(logSystem, logComponent, 'addressAccount:');
+logger.info(logSystem, logComponent, addressAccount);
+logger.info(logSystem, logComponent, 'addressAmounts:');
+logger.info(logSystem, logComponent, addressAmounts);
 
                     if (Object.keys(addressAmounts).length === 0){
                         callback(null, workers, rounds);
@@ -396,9 +446,12 @@ function SetupForPool(logger, poolOptions, setupFinished){
                         //Check if payments failed because wallet doesn't have enough coins to pay for tx fees
                         if (result.error && result.error.code === -6) {
                             var higherPercent = withholdPercent + 0.01;
-                            logger.warning(logSystem, logComponent, 'Not enough funds to cover the tx fees for sending out payments, decreasing rewards by '
+                            logger.error(logSystem, logComponent, 'Not enough funds to cover the tx fees for sending out payments, decreasing rewards by '
                                 + (higherPercent * 100) + '% and retrying');
                             trySend(higherPercent);
+                        }
+                        else if (result.error && result.error.code === -5) {
+                            logger.error(logSystem, logComponent, 'Error trying to send payments with RPC sendmany ' + JSON.stringify(result.error));
                         }
                         else if (result.error) {
                             logger.error(logSystem, logComponent, 'Error trying to send payments with RPC sendmany '
@@ -406,16 +459,17 @@ function SetupForPool(logger, poolOptions, setupFinished){
                             callback(true);
                         }
                         else {
-                            logger.debug(logSystem, logComponent, 'Sent out a total of ' + (totalSent / magnitude)
+                            logger.info(logSystem, logComponent, 'Sent out a total of ' + (totalSent / magnitude)
                                 + ' to ' + Object.keys(addressAmounts).length + ' workers');
                             if (withholdPercent > 0) {
-                                logger.warning(logSystem, logComponent, 'Had to withhold ' + (withholdPercent * 100)
+                                logger.error(logSystem, logComponent, 'Had to withhold ' + (withholdPercent * 100)
                                     + '% of reward from miners to cover transaction fees. '
                                     + 'Fund pool wallet with coins to prevent this from happening');
                             }
                             callback(null, workers, rounds);
                         }
                     }, true, true);
+}, 60000);
                 };
                 trySend(0);
 
@@ -444,7 +498,7 @@ function SetupForPool(logger, poolOptions, setupFinished){
                 }
 
 
-
+                var updateBlockStatCommands = [];
                 var movePendingCommands = [];
                 var roundsToDelete = [];
                 var orphanMergeCommands = [];
@@ -459,11 +513,14 @@ function SetupForPool(logger, poolOptions, setupFinished){
 
                 rounds.forEach(function(r){
 
+                    updateBlockStatCommands.push(['hset', 'Allblocks', coinSymbol +"-"+ r.height, r.serialized + ":" + r.category]); // hashgoal addition for update block stats for all coins
+                });
+                rounds.forEach(function(r){
                     switch(r.category){
                         case 'kicked':
-                            movePendingCommands.push(['smove', coin + ':blocksPending', coin + ':blocksKicked', r.serialized]);
+                                movePendingCommands.push(['smove', coin + ':blocksPending', coin + ':blocksKicked', r.serialized]);
                         case 'orphan':
-                            movePendingCommands.push(['smove', coin + ':blocksPending', coin + ':blocksOrphaned', r.serialized]);
+                            movePendingCommands.push(['smove', coin + ':blocksPending', coin + ':blocksKicked', r.serialized]);
                             if (r.canDeleteShares){
                                 moveSharesToCurrent(r);
                                 roundsToDelete.push(coin + ':shares:round' + r.height);
@@ -474,7 +531,6 @@ function SetupForPool(logger, poolOptions, setupFinished){
                             roundsToDelete.push(coin + ':shares:round' + r.height);
                             return;
                     }
-
                 });
 
                 var finalRedisCommands = [];
@@ -490,6 +546,9 @@ function SetupForPool(logger, poolOptions, setupFinished){
 
                 if (workerPayoutsCommand.length > 0)
                     finalRedisCommands = finalRedisCommands.concat(workerPayoutsCommand);
+
+                if (updateBlockStatCommands.length > 0)
+                    finalRedisCommands = finalRedisCommands.concat(updateBlockStatCommands);
 
                 if (roundsToDelete.length > 0)
                     finalRedisCommands.push(['del'].concat(roundsToDelete));
