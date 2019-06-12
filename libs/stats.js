@@ -814,7 +814,7 @@ module.exports = function(logger, portalConfig, poolConfigs){
         let isZ = util.isZ(algo)
         let byteUnits = [ ' KH/s', ' MH/s', ' GH/s', ' TH/s', ' PH/s' ];
         if (algo !== null)
-                byteUnits = Util.byteUnits(algo);
+                byteUnits = util.byteUnits(algo);
         if (isZ) {
                 hashrate = (hashrate * 2);
                 if (hashrate < 1000000) {
@@ -830,7 +830,7 @@ module.exports = function(logger, portalConfig, poolConfigs){
         hashrate = (hashrate * 1000000);
         if (hashrate < 1000000)
             return '0 Sol';
-        var byteUnits = Util.byteUnits();
+        var byteUnits = util.byteUnits();
         var i = Math.floor((Math.log(hashrate/1000) / Math.log(1000)) - 1);
         hashrate = (hashrate/1000) / Math.pow(1000, i + 1);
         return hashrate.toFixed(2) + byteUnits[i];
