@@ -1,6 +1,6 @@
 {
     "name": "node-open-mining-portal",
-    "version": "0.0.4",
+    "version": "0.0.5",
     "description": "An extremely efficient, highly scalable, all-in-one, easy to setup cryptocurrency mining pool",
     "keywords": [
         "stratum",
@@ -10,15 +10,17 @@
         "poolserver",
         "bitcoin",
         "litecoin",
-        "scrypt"
+        "scrypt",
+        "equihash"
     ],
-    "homepage": "https://github.com/zone117x/node-open-mining-portal",
+    "homepage": "https://github.com/cod3gen/node-open-mining-portal",
     "bugs": {
-        "url": "https://github.com/zone117x/node-open-mining-portal/issues"
+        "url": "https://github.com/cod3gen/node-open-mining-portal/issues"
     },
     "license": "GPL-2.0",
-    "author": "Matthew Little",
+    "author": "cod3gen",
     "contributors": [
+        "Matthew Little",
         "vekexasia",
         "TheSeven"
     ],
@@ -28,13 +30,13 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/zone117x/node-open-mining-portal.git"
+        "url": "https://github.com/cod3gen/node-open-mining-portal.git"
     },
     "dependencies": {
-        "stratum-pool": "git://github.com/zone117x/node-stratum-pool.git",
-        "dateformat": "1.0.12",
+        "stratum-pool": "git://github.com/cod3gen/node-stratum-pool.git#updated",
+        "dateformat": "^3.0.3",
         "node-json-minify": "*",
-        "redis": "0.12.1",
+        "redis": "^2.8.0",
         "mysql": "*",
         "async": "1.5.2",
         "express": "*",
@@ -43,13 +45,13 @@
         "dot": "*",
         "colors": "*",
         "node-watch": "0.5.9",
-        "request": "2.69.0",
+        "request": "^2.88.0",
         "nonce": "*",
-        "bignum": "0.12.5",
+        "bignum": "^0.13.0",
         "extend": "*"
     },
     "engines": {
-        "node": ">=0.10"
+        "node": ">=8.11"
     },
     "scripts": {
         "start": "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$PWD/node_modules/stratum-pool/node_modules/equihashverify/build/Release/:$PWD/node_modules/equihashverify/build/Release/ node init.js"
