@@ -9,6 +9,8 @@ var severityToColor = function(severity, text) {
         case 'debug':
             return text.green;
         case 'warning':
+			return text.yellow;
+		case 'info':
             return text.yellow;
         case 'error':
             return text.red;
@@ -20,6 +22,7 @@ var severityToColor = function(severity, text) {
 
 var severityValues = {
     'debug': 1,
+	'info': 2,
     'warning': 2,
     'error': 3,
     'special': 4
