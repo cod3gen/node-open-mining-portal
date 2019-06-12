@@ -819,6 +819,7 @@ module.exports = function(logger, portalConfig, poolConfigs){
                 hashrate = (hashrate * 2);
                 if (hashrate < 1000000) {
                    return (Math.round(hashrate / 1000) / 1000 ).toFixed(2)+' Sol/s';
+				}
         }
         let i = Math.floor((Math.log(hashrate/1000) / Math.log(1000)) - 1);
         hashrate = (hashrate/1000) / Math.pow(1000, i + 1);
