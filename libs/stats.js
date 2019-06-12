@@ -632,10 +632,10 @@ module.exports = function(logger, portalConfig, poolConfigs){
 
                 // sort miners
                 coinStats.miners = sortMinersByHashrate(coinStats.miners);
-
+				var algo = coinStats.algorithm;
                 var shareMultiplier = Math.pow(2, 32) / algos[coinStats.algorithm].multiplier;
                 coinStats.hashrate = shareMultiplier * coinStats.shares / portalConfig.website.stats.hashrateWindow;
-                coinStats.hashrateString = _this.getReadableHashRateString(coinStats.hashrate);
+                coinStats.hashrateString = _this.getReadableHashRateString(coinStats.hashrate, algo);
 
                 var _blocktime = 160;
                 var _networkHashRate = parseFloat(coinStats.poolStats.networkSols) * 1.2;
@@ -647,7 +647,7 @@ module.exports = function(logger, portalConfig, poolConfigs){
                 portalStats.global.workers += coinStats.workerCount;
 
                 /* algorithm specific global stats */
-                var algo = coinStats.algorithm;
+                
                 if (!portalStats.algos.hasOwnProperty(algo)){
                     portalStats.algos[algo] = {
                         workers: 0,
@@ -689,7 +689,7 @@ module.exports = function(logger, portalConfig, poolConfigs){
                     coinStats.workers[worker].luckDays = ((_networkHashRate / _wHashRate * _blocktime) / (24 * 60 * 60)).toFixed(3);
                     coinStats.workers[worker].luckHours = ((_networkHashRate / _wHashRate * _blocktime) / (60 * 60)).toFixed(3);
                     coinStats.workers[worker].hashrate = _workerRate;
-                    coinStats.workers[worker].hashrateString = _this.getReadableHashRateString(_workerRate);
+                    coinStats.workers[worker].hashrateString = _this.getReadableHashRateString(_workerRate, algo);
                     var miner = worker.split('.')[0];
                     if (miner in coinStats.miners) {
                         coinStats.workers[worker].currRoundTime = coinStats.miners[miner].currRoundTime;
